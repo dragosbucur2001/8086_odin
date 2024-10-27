@@ -4,6 +4,11 @@ import "core:fmt"
 import "core:io"
 import "core:os"
 
+BitGroups :: enum {
+	NONE,
+	LITERAL,
+}
+
 DecodedInstruction :: struct {}
 
 get_instruction :: proc(reader: ^BitReader) -> DecodedInstruction {
