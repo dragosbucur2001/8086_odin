@@ -1,7 +1,7 @@
 package emulator
 
 BitReader :: struct {
-	data:      []byte,
+	data:      []byte, // read only, not owned
 	stable_it: u64,
 	it:        u64,
 	bit_pos:   i8,
@@ -20,9 +20,11 @@ get_byte :: proc(using reader: ^BitReader) -> u8 {
 	return data[it]
 }
 
-read_bits :: proc(using reader: ^BitReader, bit_count: u8) -> (result: u8) {
+read_bits :: proc(using reader: ^BitReader, bit_count: u8) -> (result: u8, ok: bool) {
 	assert(bit_count <= 8)
-	assert(!finished(reader))
+
+	if (bit_count == 0) do return 0, true
+	if (finished(reader)) do return 0, false
 
 	for i in 0 ..< bit_count {
 		if (bit_pos < 0) {
@@ -31,7 +33,7 @@ read_bits :: proc(using reader: ^BitReader, bit_count: u8) -> (result: u8) {
 			bit_pos = FIRST_BIT
 			it += 1
 
-			assert(!finished(reader))
+			if (finished(reader)) do return 0, false
 		}
 
 		casted := cast(u8)bit_pos
@@ -41,7 +43,7 @@ read_bits :: proc(using reader: ^BitReader, bit_count: u8) -> (result: u8) {
 		bit_pos -= 1
 	}
 
-	return result
+	return result, true
 }
 
 reset :: proc(using reader: ^BitReader) {
