@@ -17,6 +17,7 @@ BitGroup :: enum {
 }
 BG :: BitGroup
 
+
 InstructionSection :: struct {
 	group:     BG,
 	bit_count: u8,
@@ -33,15 +34,58 @@ Instruction :: struct {
 	sections: [10]InstructionSection,
 }
 
+ImmediateOperand :: distinct i32
+
+DirectAddrOperand :: distinct i32
+
+OpWidth :: enum {
+	BIT_0,
+	BIT_8,
+	BIT_16,
+}
+
+EffectiveAddrOperand :: bit_field u8 {
+	width: OpWidth | 2, // mod field
+	base:  u8      | 3, // rm field
+}
+
+EffectiveOperandBase :: [8]string {
+	"bx + si",
+	"bx + di",
+	"bp + si",
+	"bp + di",
+	"si",
+	"di",
+	"bx",
+	"bp",
+}
+
+RegisterOperand :: bit_field u8 {
+	reg:   u8 | 3,
+	width: u8 | 1, // w field
+}
+
+RegisterName := [8][2]string {
+	{"al", "ax"},
+	{"cl", "cx"},
+	{"dl", "dx"},
+	{"bl", "bx"},
+	{"ah", "sp"},
+	{"ch", "bp"},
+	{"dh", "si"},
+	{"bh", "di"},
+}
+
+Operand :: union {
+	ImmediateOperand,
+	DirectAddrOperand,
+	EffectiveAddrOperand,
+	RegisterOperand,
+}
+
 DecodedInstruction :: struct {
-	type: OpCode,
-	D:    u8,
-	W:    u8,
-	MOD:  u8,
-	REG:  u8,
-	RM:   u8,
-	DATA: u16,
-	DISP: u16,
+	type:     OpCode,
+	operands: [2]Operand,
 }
 
 //
@@ -56,7 +100,7 @@ BitGroupSizes := [BitGroup]u8 {
 	BG.MOD     = 2,
 	BG.REG     = 3,
 	BG.RM      = 3,
-	// DATA and DISP are 8 or 16 depending on whether MOD and W
+	// DATA and DISP are 8 or 16 depending on MOD and W
 	BG.DATA    = 0,
 	BG.DISP    = 0,
 }
@@ -106,6 +150,7 @@ init_instruction :: proc(type: OpCode, sections: ..union #no_nil {
 }
 
 Instructions := [?]Instruction {
+	// reg/mem to/from register
 	init_instruction(
 		OpCode.MOV,
 		LiteralData{6, 0b100010},
@@ -116,6 +161,8 @@ Instructions := [?]Instruction {
 		BG.RM,
 		BG.DISP,
 	),
+	// immidiate to register
+	init_instruction(OpCode.MOV, LiteralData{4, 0b1011}, BG.W, BG.REG, BG.DATA),
 }
 
 //
@@ -137,6 +184,14 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 		section_loop: for section in instruction.sections {
 			bit_group := read_bits(reader, section.bit_count) or_continue instr_loop
 
+			direction: Maybe(u8) = {}
+			wide: Maybe(u8) = {}
+			mod: Maybe(u8) = {}
+			rm: Maybe(u8) = {}
+			reg: Maybe(u8) = {}
+			data: Maybe(u16) = {}
+			disp: Maybe(u16) = {}
+
 			switch section.group {
 			case BG.NONE:
 				break section_loop
@@ -145,37 +200,37 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 					continue instr_loop
 				}
 			case BG.D:
-				result.D = bit_group
+				direction = bit_group
 			case BG.W:
-				result.W = bit_group
+				wide = bit_group
 			case BG.MOD:
-				result.MOD = bit_group
+				mod = bit_group
 			case BG.REG:
-				result.REG = bit_group
+				reg = bit_group
 			case BG.RM:
-				result.RM = bit_group
+				rm = bit_group
 
 			// DATA and DISP do not read anything into bit_group since they are defined as 0-sized,
 			// so that they can be handled here
 			case BG.DATA:
 				{
 					low := cast(u16)read_bits(reader, 8) or_continue instr_loop
-					result.DATA = low
+					data = low
 
-					if result.W != 0 {
+					if wide != 0 && wide != nil {
 						high := cast(u16)read_bits(reader, 8) or_continue instr_loop
-						result.DATA += high << 8
+						data = low | high << 8
 					}
 				}
 			case BG.DISP:
 				{
-					if result.MOD == 0b01 {
+					if mod == 0b01 {
 						low := cast(u16)read_bits(reader, 8) or_continue instr_loop
-						result.DISP = low
-					} else if (result.MOD == 0b10) || (result.MOD == 0b00 && result.RM == 110) {
+						disp = low
+					} else if (mod == 0b10) || (mod == 0b00 && rm == 110) {
 						low := cast(u16)read_bits(reader, 8) or_continue instr_loop
 						high := cast(u16)read_bits(reader, 8) or_continue instr_loop
-						result.DISP = low | high << 8
+						disp = low | high << 8
 					}
 				}
 			}
@@ -183,20 +238,10 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 
 		// All sections of the instruction matched so we can commit and return
 		commit(reader)
+
+
 		return result, true
 	}
 
 	return {}, false
-}
-
-// for MOD = 11
-REG_Encodings := [8][2]string {
-	{"al", "ax"},
-	{"cl", "cx"},
-	{"dl", "dx"},
-	{"bl", "bx"},
-	{"ah", "sp"},
-	{"ch", "bp"},
-	{"dh", "si"},
-	{"bh", "di"},
 }
