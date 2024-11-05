@@ -211,9 +211,13 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 
 	reader := init_bit_reader(data)
 
+	weird_grouping := [2]ExpectedGrouping {
+		ExpEffective{"bp + si", 1000, .BIT_16},
+		cast(ExpImmediate)29,
+	}
 
 	// dst, src
-	expected_instrunctions := [?]OpCode{.ADD}
+	expected_instrunctions := [?]OpCode{.ADD, .SUB}
 	expected_grouping := [?][2]ExpectedGrouping {
 		{"bx", ExpEffective{"bx + si", 0, .BIT_0}},
 		{"bx", ExpEffective{"bp", 0, .BIT_8}},
@@ -231,7 +235,7 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 		{ExpEffective{"bp + si", 4, .BIT_8}, "bh"},
 		{ExpEffective{"bp + di", 6, .BIT_8}, "di"},
 		{ExpEffective{"bx", 0, .BIT_0}, cast(ExpImmediate)34},
-		{ExpEffective{"bp + si", 1000, .BIT_16}, cast(ExpImmediate)29},
+		weird_grouping,
 		{"ax", ExpEffective{"bp", 0, .BIT_8}},
 		{"al", ExpEffective{"bx + si", 0, .BIT_0}},
 		{"ax", "bx"},
@@ -242,7 +246,14 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 	}
 
 	for instr_type in expected_instrunctions {
-		for grouping in expected_grouping {
+		for grouping_ in expected_grouping {
+			grouping: [2]ExpectedGrouping = grouping_
+
+			// This operation is sligthly different for sub
+			if (instr_type == OpCode.SUB && grouping == weird_grouping) {
+				grouping = {ExpEffective{"bx + di", 0, .BIT_0}, cast(ExpImmediate)29}
+			}
+
 			//log.info(grouping)
 			instr, ok := get_instruction(&reader)
 			t.expect(test, instr.type == instr_type)
