@@ -9,6 +9,7 @@ BitGroup :: enum {
 	LITERAL,
 	D, // Direction To/From register
 	W, // wide or not
+	S, // sign extended
 	MOD, // Register Mode, or Memory Mode w/ displacement
 	REG, // register operand to be used
 	RM, // register or memory "destination""
@@ -27,6 +28,7 @@ InstructionSection :: struct {
 OpCode :: enum {
 	NONE,
 	MOV,
+	ADD,
 }
 
 Instruction :: struct {
@@ -103,6 +105,7 @@ BitGroupSizes := [BitGroup]u8 {
 	BG.LITERAL = 0,
 	BG.D       = 1,
 	BG.W       = 1,
+	BG.S       = 1,
 	BG.MOD     = 2,
 	BG.REG     = 3,
 	BG.RM      = 3,
@@ -115,6 +118,7 @@ BitGroupSizes := [BitGroup]u8 {
 OpCodeNames := [OpCode]string {
 	OpCode.NONE = "ERROR",
 	OpCode.MOV  = "mov",
+	OpCode.ADD  = "add",
 }
 
 @(private)
@@ -231,6 +235,38 @@ Instructions := [?]Instruction {
 		BG.DISP,
 		ImpliedBitGroup{BG.D, 0},
 	),
+	// reg/mem to register
+	init_instruction(
+		OpCode.ADD,
+		LiteralData{6, 0b000000},
+		BG.D,
+		BG.W,
+		BG.MOD,
+		BG.REG,
+		BG.RM,
+		BG.DISP,
+	),
+	// imm to register/mem
+	init_instruction(
+		OpCode.ADD,
+		LiteralData{6, 0b100000},
+		BG.S,
+		BG.W,
+		BG.MOD,
+		LiteralData{3, 0b000},
+		BG.RM,
+		BG.DISP,
+		BG.DATA,
+	),
+	// imm to acc
+	init_instruction(
+		OpCode.ADD,
+		LiteralData{7, 0b0000010},
+		BG.W,
+		ImpliedBitGroup{BG.REG, 0},
+		BG.DATA,
+		ImpliedBitGroup{BG.D, 1},
+	),
 }
 
 //
@@ -251,6 +287,7 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 
 		direction: Maybe(u8) = {}
 		wide: Maybe(u8) = {}
+		sign_extended: Maybe(u8) = {}
 		mod: Maybe(u8) = {}
 		rm: Maybe(u8) = {}
 		reg: Maybe(u8) = {}
@@ -274,6 +311,8 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 				direction = bit_group
 			case BG.W:
 				wide = bit_group
+			case BG.S:
+				sign_extended = bit_group
 			case BG.MOD:
 				mod = bit_group
 			case BG.REG:
@@ -285,7 +324,8 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 			// so that they can be handled here
 			case BG.DATA:
 				{
-					if (wide.(u8) or_else 0) == 1 {
+					sign_extended_check := sign_extended == nil || sign_extended.(u8) == 0
+					if (wide.(u8) or_else 0) == 1 && sign_extended_check {
 						low := cast(u16)read_bits(reader, 8) or_continue instr_loop
 						high := cast(u16)read_bits(reader, 8) or_continue instr_loop
 						data = transmute(i16)(low | high << 8)

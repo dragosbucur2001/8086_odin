@@ -1,5 +1,6 @@
 package emulator
 
+import "core:log"
 import "core:os"
 import "core:testing"
 
@@ -20,6 +21,11 @@ ExpectedGrouping :: union #no_nil {
 	ExpReg,
 	ExpDirAddr,
 	ExpEffective,
+}
+
+ExpectedInstr :: struct {
+	type:     OpCode,
+	grouping: [2]ExpectedGrouping,
 }
 
 check_operand :: proc(test: ^t.T, expected: ExpectedGrouping, operand: Operand, W: u8) {
@@ -192,4 +198,62 @@ decode_mov_challenge :: proc(test: ^t.T) {
 		check_operand(test, grouping[0], instr.dst, W)
 		check_operand(test, grouping[1], instr.src, W)
 	}
+}
+
+@(test)
+decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
+	data, ok_file := os.read_entire_file_from_filename("./tests/listing_0041_add_sub_cmp_jnz")
+	defer delete(data)
+
+	if !ok_file {
+		t.fail_now(test)
+	}
+
+	reader := init_bit_reader(data)
+
+
+	// dst, src
+	expected_instrunctions := [?]OpCode{.ADD}
+	expected_grouping := [?][2]ExpectedGrouping {
+		{"bx", ExpEffective{"bx + si", 0, .BIT_0}},
+		{"bx", ExpEffective{"bp", 0, .BIT_8}},
+		{"si", cast(ExpImmediate)2},
+		{"bp", cast(ExpImmediate)2},
+		{"cx", cast(ExpImmediate)8},
+		{"bx", ExpEffective{"bp", 0, .BIT_8}},
+		{"cx", ExpEffective{"bx", 2, .BIT_8}},
+		{"bh", ExpEffective{"bp + si", 4, .BIT_8}},
+		{"di", ExpEffective{"bp + di", 6, .BIT_8}},
+		{ExpEffective{"bx + si", 0, .BIT_0}, "bx"},
+		{ExpEffective{"bp", 0, .BIT_8}, "bx"},
+		{ExpEffective{"bp", 0, .BIT_8}, "bx"},
+		{ExpEffective{"bx", 2, .BIT_8}, "cx"},
+		{ExpEffective{"bp + si", 4, .BIT_8}, "bh"},
+		{ExpEffective{"bp + di", 6, .BIT_8}, "di"},
+		{ExpEffective{"bx", 0, .BIT_0}, cast(ExpImmediate)34},
+		{ExpEffective{"bp + si", 1000, .BIT_16}, cast(ExpImmediate)29},
+		{"ax", ExpEffective{"bp", 0, .BIT_8}},
+		{"al", ExpEffective{"bx + si", 0, .BIT_0}},
+		{"ax", "bx"},
+		{"al", "ah"},
+		{"ax", cast(ExpImmediate)1000},
+		{"al", cast(ExpImmediate)-30},
+		{"al", cast(ExpImmediate)9},
+	}
+
+	for instr_type in expected_instrunctions {
+		for grouping in expected_grouping {
+			//log.info(grouping)
+			instr, ok := get_instruction(&reader)
+			t.expect(test, instr.type == instr_type)
+			t.expect(test, ok)
+			//log.info(instr)
+
+			W := is_wide(&instr)
+
+			check_operand(test, grouping[0], instr.dst, W)
+			check_operand(test, grouping[1], instr.src, W)
+		}
+	}
+
 }
