@@ -3,8 +3,55 @@ package emulator
 import "core:os"
 import "core:testing"
 
+is_wide :: proc(instr: ^DecodedInstruction) -> u8 {
+	return (InstrFlags.Wide in instr.flags) ? 1 : 0
+}
+
+ExpImmediate :: distinct i16
+ExpReg :: distinct string
+ExpDirAddr :: distinct i16
+ExpEffective :: struct {
+	base:       string,
+	disp:       i16,
+	disp_width: DisplacementWidth,
+}
+ExpectedGrouping :: union #no_nil {
+	ExpImmediate,
+	ExpReg,
+	ExpDirAddr,
+	ExpEffective,
+}
+
+check_operand :: proc(test: ^t.T, expected: ExpectedGrouping, operand: Operand, W: u8) {
+	switch exp in expected {
+	case ExpImmediate:
+		{
+			op, _ := operand.(ImmediateOperand)
+			t.expect(test, cast(i16)op == cast(i16)exp)
+		}
+	case ExpReg:
+		{
+			op, _ := operand.(RegisterOperand)
+			t.expect(test, RegisterName[op.reg][W] == cast(string)exp)
+		}
+	case ExpEffective:
+		{
+			op, _ := operand.(EffectiveAddrOperand)
+			t.expect(test, EffectiveOperandBase[op.base] == exp.base)
+			t.expect(test, op.disp_width == exp.disp_width)
+			t.expect(test, op.displacement == exp.disp)
+		}
+	case ExpDirAddr:
+		{
+			op, _ := operand.(DirectAddrOperand)
+			t.expect(test, cast(i16)op == cast(i16)exp)
+		}
+	}
+}
+
+
 @(test)
-read_mov :: proc(test: ^t.T) {
+decode_mov :: proc(test: ^t.T) {
 	data, ok_file := os.read_entire_file_from_filename("./tests/listing_0037_single_register_mov")
 	defer delete(data)
 
@@ -14,6 +61,7 @@ read_mov :: proc(test: ^t.T) {
 
 	reader := init_bit_reader(data)
 
+	// mov cx, bx
 	instr, ok := get_instruction(&reader)
 	t.expect(test, ok)
 	t.expect(test, instr.type == OpCode.MOV)
@@ -21,51 +69,127 @@ read_mov :: proc(test: ^t.T) {
 	t.expect(test, InstrFlags.Wide in instr.flags)
 	W := (InstrFlags.Wide in instr.flags) ? 1 : 0
 
-	dst, ok_dst := instr.dst.(RegisterOperand)
-	t.expect(test, ok_dst)
+	dst, _ := instr.dst.(RegisterOperand)
 	t.expect(test, RegisterName[dst.reg][W] == "cx")
 
-	src, ok_src := instr.src.(RegisterOperand)
-	t.expect(test, ok_src)
+	src, _ := instr.src.(RegisterOperand)
 	t.expect(test, RegisterName[src.reg][W] == "bx")
 }
 
-//@(test)
-//read_mov_complex :: proc(test: ^t.T) {
-//	data, ok_file := os.read_entire_file_from_filename("./tests/listing_0039_more_movs")
-//	defer delete(data)
-//
-//	if !ok_file {
-//		t.fail_now(test)
-//	}
-//
-//	reader := init_bit_reader(data)
-//
-//	// mob si, bx
-//	instr, ok := get_instruction(&reader)
-//	t.expect(test, ok)
-//	t.expect(test, instr.type == OpCode.MOV)
-//	t.expect(test, instr.D == 0b0)
-//	t.expect(test, instr.W == 0b1)
-//	t.expect(test, instr.MOD == 0b11)
-//	t.expect(test, instr.REG == 0b011)
-//	t.expect(test, instr.RM == 0b110)
-//
-//	// mob dh, al
-//	instr, ok = get_instruction(&reader)
-//	t.expect(test, ok)
-//	t.expect(test, instr.type == OpCode.MOV)
-//	t.expect(test, instr.D == 0b0)
-//	t.expect(test, instr.W == 0b0)
-//	t.expect(test, instr.MOD == 0b11)
-//	t.expect(test, instr.REG == 0b000)
-//	t.expect(test, instr.RM == 0b110)
-//
-//	// mob cl, 12
-//	instr, ok = get_instruction(&reader)
-//	t.expect(test, ok)
-//	t.expect(test, instr.type == OpCode.MOV)
-//	t.expect(test, instr.W == 0b0)
-//	t.expect(test, instr.DATA == 12)
-//	t.expect(test, instr.REG == 0b001)
-//}
+@(test)
+decode_mov_many_register :: proc(test: ^t.T) {
+	data, ok_file := os.read_entire_file_from_filename("./tests/listing_0038_many_register_mov")
+	defer delete(data)
+
+	if !ok_file {
+		t.fail_now(test)
+	}
+
+	reader := init_bit_reader(data)
+
+	expected := [?][2]ExpectedGrouping {
+		{"cx", "bx"},
+		{"ch", "ah"},
+		{"dx", "bx"},
+		{"si", "bx"},
+		{"bx", "di"},
+		{"al", "cl"},
+		{"ch", "ch"},
+		{"bx", "ax"},
+		{"bx", "si"},
+		{"sp", "di"},
+		{"bp", "ax"},
+	}
+
+	for grouping in expected {
+		instr, ok := get_instruction(&reader)
+		t.expect(test, instr.type == OpCode.MOV)
+		t.expect(test, ok)
+
+		W := is_wide(&instr)
+
+		check_operand(test, grouping[0], instr.dst, W)
+		check_operand(test, grouping[1], instr.src, W)
+	}
+}
+
+@(test)
+decode_mov_complex :: proc(test: ^t.T) {
+	data, ok_file := os.read_entire_file_from_filename("./tests/listing_0039_more_movs")
+	defer delete(data)
+
+	if !ok_file {
+		t.fail_now(test)
+	}
+
+	reader := init_bit_reader(data)
+
+	// dst, src
+	expected := [?][2]ExpectedGrouping {
+		{"si", "bx"},
+		{"dh", "al"},
+		{"cl", cast(ExpImmediate)12},
+		{"ch", cast(ExpImmediate)-12},
+		{"cx", cast(ExpImmediate)12},
+		{"cx", cast(ExpImmediate)-12},
+		{"dx", cast(ExpImmediate)3948},
+		{"dx", cast(ExpImmediate)-3948},
+		{"al", ExpEffective{"bx + si", 0, .BIT_0}},
+		{"bx", ExpEffective{"bp + di", 0, .BIT_0}},
+		{"dx", ExpEffective{"bp", 0, .BIT_8}}, // bp with a disp width of 0 is actually a dirrect address
+		{"ah", ExpEffective{"bx + si", 4, .BIT_8}},
+		{"al", ExpEffective{"bx + si", 4999, .BIT_16}},
+		{ExpEffective{"bx + di", 0, .BIT_0}, "cx"},
+		{ExpEffective{"bp + si", 0, .BIT_0}, "cl"},
+		{ExpEffective{"bp", 0, .BIT_8}, "ch"},
+	}
+
+	for grouping in expected {
+		instr, ok := get_instruction(&reader)
+		t.expect(test, instr.type == OpCode.MOV)
+		t.expect(test, ok)
+
+		W := is_wide(&instr)
+
+		check_operand(test, grouping[0], instr.dst, W)
+		check_operand(test, grouping[1], instr.src, W)
+	}
+}
+
+@(test)
+decode_mov_challenge :: proc(test: ^t.T) {
+	data, ok_file := os.read_entire_file_from_filename("./tests/listing_0040_challenge_movs")
+	defer delete(data)
+
+	if !ok_file {
+		t.fail_now(test)
+	}
+
+	reader := init_bit_reader(data)
+
+	// dst, src
+	expected := [?][2]ExpectedGrouping {
+		{"ax", ExpEffective{"bx + di", -37, .BIT_8}},
+		{ExpEffective{"si", -300, .BIT_16}, "cx"},
+		{"dx", ExpEffective{"bx", -32, .BIT_8}},
+		{ExpEffective{"bp + di", 0, .BIT_0}, cast(ExpImmediate)7},
+		{ExpEffective{"di", 901, .BIT_16}, cast(ExpImmediate)347},
+		{"bp", cast(ExpDirAddr)5},
+		{"bx", cast(ExpDirAddr)3458},
+		{"ax", cast(ExpDirAddr)2555},
+		{"ax", cast(ExpDirAddr)16},
+		{cast(ExpDirAddr)2554, "ax"},
+		{cast(ExpDirAddr)15, "ax"},
+	}
+
+	for grouping in expected {
+		instr, ok := get_instruction(&reader)
+		t.expect(test, instr.type == OpCode.MOV)
+		t.expect(test, ok)
+
+		W := is_wide(&instr)
+
+		check_operand(test, grouping[0], instr.dst, W)
+		check_operand(test, grouping[1], instr.src, W)
+	}
+}

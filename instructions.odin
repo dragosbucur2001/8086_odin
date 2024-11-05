@@ -1,7 +1,5 @@
 package emulator
 
-import "core:log"
-
 //
 // DEFINITIONS
 //
@@ -36,9 +34,9 @@ Instruction :: struct {
 	sections: [10]InstructionSection,
 }
 
-ImmediateOperand :: distinct i32
+ImmediateOperand :: distinct i16
 
-DirectAddrOperand :: distinct i32
+DirectAddrOperand :: distinct i16
 
 DisplacementWidth :: enum {
 	BIT_0,
@@ -47,20 +45,20 @@ DisplacementWidth :: enum {
 }
 
 EffectiveAddrOperand :: struct {
-	displacement: u16,
+	displacement: i16,
 	disp_width:   DisplacementWidth,
 	base:         u8, // rm field
 }
 
-EffectiveOperandBase :: [8]string {
+EffectiveOperandBase := [8]string {
 	"bx + si",
 	"bx + di",
 	"bp + si",
 	"bp + di",
 	"si",
 	"di",
-	"bx",
 	"bp",
+	"bx",
 }
 
 RegisterOperand :: struct {
@@ -128,15 +126,17 @@ LiteralData :: struct {
 @(private)
 ImpliedBitGroup :: struct {
 	bit_group: BG,
-	implied:   bool,
 	value:     u8,
 }
 
-init_instruction :: proc(type: OpCode, sections: ..union #no_nil {
-		BG,
-		LiteralData,
-		ImpliedBitGroup,
-	}) -> (result: Instruction) {
+@(private)
+InitSections :: union #no_nil {
+	BG,
+	LiteralData,
+	ImpliedBitGroup,
+}
+
+init_instruction :: proc(type: OpCode, sections: ..InitSections) -> (result: Instruction) {
 	result.type = type
 
 	for section, idx in sections {
@@ -174,6 +174,8 @@ init_instruction :: proc(type: OpCode, sections: ..union #no_nil {
 	return result
 }
 
+DirAddr := [3]InitSections{}
+
 Instructions := [?]Instruction {
 	// reg/mem to/from register
 	init_instruction(
@@ -186,8 +188,49 @@ Instructions := [?]Instruction {
 		BG.RM,
 		BG.DISP,
 	),
+	// immidiate to register/memory
+	init_instruction(
+		OpCode.MOV,
+		LiteralData{7, 0b1100011},
+		BG.W,
+		BG.MOD,
+		LiteralData{3, 0b000},
+		BG.RM,
+		BG.DISP,
+		BG.DATA,
+	),
 	// immidiate to register
-	init_instruction(OpCode.MOV, LiteralData{4, 0b1011}, BG.W, BG.REG, BG.DATA),
+	init_instruction(
+		OpCode.MOV,
+		LiteralData{4, 0b1011},
+		BG.W,
+		BG.REG,
+		BG.DATA,
+		ImpliedBitGroup{BG.D, 1},
+	),
+	// mem to acc
+	init_instruction(
+		OpCode.MOV,
+		LiteralData{7, 0b1010000},
+		BG.W,
+		// TODO: This is for dirrect address, it looks ugly, refactor
+		ImpliedBitGroup{BG.REG, 0},
+		ImpliedBitGroup{BG.MOD, 0},
+		ImpliedBitGroup{BG.RM, 0b110},
+		BG.DISP,
+		ImpliedBitGroup{BG.D, 1},
+	),
+	// acc to mem
+	init_instruction(
+		OpCode.MOV,
+		LiteralData{7, 0b1010001},
+		BG.W,
+		ImpliedBitGroup{BG.REG, 0},
+		ImpliedBitGroup{BG.MOD, 0},
+		ImpliedBitGroup{BG.RM, 0b110},
+		BG.DISP,
+		ImpliedBitGroup{BG.D, 0},
+	),
 }
 
 //
@@ -211,8 +254,8 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 		mod: Maybe(u8) = {}
 		rm: Maybe(u8) = {}
 		reg: Maybe(u8) = {}
-		data: Maybe(u16) = {}
-		disp: Maybe(u16) = {}
+		data: Maybe(i16) = {}
+		disp: Maybe(i16) = {}
 
 		section_loop: for section in instruction.sections {
 			bit_group := section.value
@@ -242,23 +285,24 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 			// so that they can be handled here
 			case BG.DATA:
 				{
-					low := cast(u16)read_bits(reader, 8) or_continue instr_loop
-					data = low
-
-					if wide != 0 && wide != nil {
+					if (wide.(u8) or_else 0) == 1 {
+						low := cast(u16)read_bits(reader, 8) or_continue instr_loop
 						high := cast(u16)read_bits(reader, 8) or_continue instr_loop
-						data = low | high << 8
+						data = transmute(i16)(low | high << 8)
+					} else {
+						low := read_bits(reader, 8) or_continue instr_loop
+						data = cast(i16)transmute(i8)low
 					}
 				}
 			case BG.DISP:
 				{
 					if mod == 0b01 {
-						low := cast(u16)read_bits(reader, 8) or_continue instr_loop
-						disp = low
-					} else if (mod == 0b10) || (mod == 0b00 && rm == 110) {
+						low := read_bits(reader, 8) or_continue instr_loop
+						disp = cast(i16)transmute(i8)low
+					} else if (mod == 0b10) || (mod == 0b00 && rm == 0b110) {
 						low := cast(u16)read_bits(reader, 8) or_continue instr_loop
 						high := cast(u16)read_bits(reader, 8) or_continue instr_loop
-						disp = low | high << 8
+						disp = transmute(i16)(low | high << 8)
 					}
 				}
 			}
@@ -271,7 +315,11 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 			result.flags += {.Wide}
 		}
 
-		result.src = RegisterOperand{reg.(u8)}
+		if val, ok := reg.(u8); ok {
+			result.src = RegisterOperand{val}
+		} else if val, ok := data.(i16); ok {
+			result.src = cast(ImmediateOperand)val
+		}
 
 		switch v in mod {
 		case u8:
@@ -279,10 +327,10 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 				if mod == 0b11 {
 					result.dst = RegisterOperand{rm.(u8)}
 				} else if mod == 0b00 && rm.(u8) == 0b110 {
-					result.dst = cast(DirectAddrOperand)disp.(u16)
+					result.dst = cast(DirectAddrOperand)disp.(i16)
 				} else {
 					result.dst = EffectiveAddrOperand {
-						displacement = disp.(u16),
+						displacement = disp.(i16) or_else 0,
 						disp_width   = cast(DisplacementWidth)v,
 						base         = rm.(u8),
 					}
@@ -291,12 +339,12 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 		case:
 			{
 				// Immediate value
-				result.dst = cast(ImmediateOperand)data.(u16)
+				result.dst = cast(ImmediateOperand)data.(i16)
 			}
 		}
 
 		if (direction.(u8) or_else 0) == 1 {
-			temp := result.src
+			temp := result.dst
 			result.dst = result.src
 			result.src = temp
 		}
