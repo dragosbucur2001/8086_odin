@@ -1,5 +1,7 @@
 package emulator
 
+import "core:log"
+
 //
 // DEFINITIONS
 //
@@ -17,11 +19,11 @@ BitGroup :: enum {
 }
 BG :: BitGroup
 
-
 InstructionSection :: struct {
 	group:     BG,
 	bit_count: u8,
 	value:     u8,
+	implied:   bool,
 }
 
 OpCode :: enum {
@@ -38,15 +40,16 @@ ImmediateOperand :: distinct i32
 
 DirectAddrOperand :: distinct i32
 
-OpWidth :: enum {
+DisplacementWidth :: enum {
 	BIT_0,
 	BIT_8,
 	BIT_16,
 }
 
-EffectiveAddrOperand :: bit_field u8 {
-	width: OpWidth | 2, // mod field
-	base:  u8      | 3, // rm field
+EffectiveAddrOperand :: struct {
+	displacement: u16,
+	disp_width:   DisplacementWidth,
+	base:         u8, // rm field
 }
 
 EffectiveOperandBase :: [8]string {
@@ -60,9 +63,8 @@ EffectiveOperandBase :: [8]string {
 	"bp",
 }
 
-RegisterOperand :: bit_field u8 {
-	reg:   u8 | 3,
-	width: u8 | 1, // w field
+RegisterOperand :: struct {
+	reg: u8,
 }
 
 RegisterName := [8][2]string {
@@ -83,9 +85,15 @@ Operand :: union {
 	RegisterOperand,
 }
 
+InstrFlags :: enum {
+	Wide,
+}
+
 DecodedInstruction :: struct {
-	type:     OpCode,
-	operands: [2]Operand,
+	type:  OpCode,
+	dst:   Operand,
+	src:   Operand,
+	flags: bit_set[InstrFlags],
 }
 
 //
@@ -117,14 +125,30 @@ LiteralData :: struct {
 	value:     u8,
 }
 
+@(private)
+ImpliedBitGroup :: struct {
+	bit_group: BG,
+	implied:   bool,
+	value:     u8,
+}
+
 init_instruction :: proc(type: OpCode, sections: ..union #no_nil {
-		LiteralData,
 		BG,
+		LiteralData,
+		ImpliedBitGroup,
 	}) -> (result: Instruction) {
 	result.type = type
 
 	for section, idx in sections {
 		switch unwrapped in section {
+		case BG:
+			{
+				result.sections[idx] = InstructionSection {
+					group     = unwrapped,
+					bit_count = BitGroupSizes[unwrapped],
+					value     = 0,
+				}
+			}
 		case LiteralData:
 			{
 				assert(unwrapped.bit_count > 0 && unwrapped.bit_count <= 8)
@@ -135,12 +159,13 @@ init_instruction :: proc(type: OpCode, sections: ..union #no_nil {
 					value     = unwrapped.value,
 				}
 			}
-		case BG:
+		case ImpliedBitGroup:
 			{
 				result.sections[idx] = InstructionSection {
-					group     = unwrapped,
-					bit_count = BitGroupSizes[unwrapped],
-					value     = 0,
+					group     = unwrapped.bit_group,
+					bit_count = BitGroupSizes[unwrapped.bit_group],
+					value     = unwrapped.value,
+					implied   = true,
 				}
 			}
 		}
@@ -181,16 +206,19 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 			type = instruction.type,
 		}
 
-		section_loop: for section in instruction.sections {
-			bit_group := read_bits(reader, section.bit_count) or_continue instr_loop
+		direction: Maybe(u8) = {}
+		wide: Maybe(u8) = {}
+		mod: Maybe(u8) = {}
+		rm: Maybe(u8) = {}
+		reg: Maybe(u8) = {}
+		data: Maybe(u16) = {}
+		disp: Maybe(u16) = {}
 
-			direction: Maybe(u8) = {}
-			wide: Maybe(u8) = {}
-			mod: Maybe(u8) = {}
-			rm: Maybe(u8) = {}
-			reg: Maybe(u8) = {}
-			data: Maybe(u16) = {}
-			disp: Maybe(u16) = {}
+		section_loop: for section in instruction.sections {
+			bit_group := section.value
+			if !section.implied {
+				bit_group = read_bits(reader, section.bit_count) or_continue instr_loop
+			}
 
 			switch section.group {
 			case BG.NONE:
@@ -239,6 +267,39 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 		// All sections of the instruction matched so we can commit and return
 		commit(reader)
 
+		if (wide.(u8) or_else 0) == 1 {
+			result.flags += {.Wide}
+		}
+
+		result.src = RegisterOperand{reg.(u8)}
+
+		switch v in mod {
+		case u8:
+			{
+				if mod == 0b11 {
+					result.dst = RegisterOperand{rm.(u8)}
+				} else if mod == 0b00 && rm.(u8) == 0b110 {
+					result.dst = cast(DirectAddrOperand)disp.(u16)
+				} else {
+					result.dst = EffectiveAddrOperand {
+						displacement = disp.(u16),
+						disp_width   = cast(DisplacementWidth)v,
+						base         = rm.(u8),
+					}
+				}
+			}
+		case:
+			{
+				// Immediate value
+				result.dst = cast(ImmediateOperand)data.(u16)
+			}
+		}
+
+		if (direction.(u8) or_else 0) == 1 {
+			temp := result.src
+			result.dst = result.src
+			result.src = temp
+		}
 
 		return result, true
 	}

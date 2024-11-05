@@ -24,5 +24,5 @@ main :: proc() {
 
 	reader := init_bit_reader(data)
 
-
+	instr, ok_instr := get_instruction(&reader)
 }
