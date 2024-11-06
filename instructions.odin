@@ -30,6 +30,7 @@ OpCode :: enum {
 	MOV,
 	ADD,
 	SUB,
+	CMP,
 }
 
 Instruction :: struct {
@@ -121,6 +122,7 @@ OpCodeNames := [OpCode]string {
 	OpCode.MOV  = "mov",
 	OpCode.ADD  = "add",
 	OpCode.SUB  = "sub",
+	OpCode.CMP  = "cmp",
 }
 
 @(private)
@@ -296,6 +298,38 @@ Instructions := [?]Instruction {
 	init_instruction(
 		OpCode.SUB,
 		LiteralData{7, 0b0010110},
+		BG.W,
+		ImpliedBitGroup{BG.REG, 0},
+		BG.DATA,
+		ImpliedBitGroup{BG.D, 1},
+	),
+	// reg/mem to register
+	init_instruction(
+		OpCode.CMP,
+		LiteralData{6, 0b001110},
+		BG.D,
+		BG.W,
+		BG.MOD,
+		BG.REG,
+		BG.RM,
+		BG.DISP,
+	),
+	// imm to register/mem
+	init_instruction(
+		OpCode.CMP,
+		LiteralData{6, 0b100000},
+		BG.S,
+		BG.W,
+		BG.MOD,
+		LiteralData{3, 0b111},
+		BG.RM,
+		BG.DISP,
+		BG.DATA,
+	),
+	// imm to acc
+	init_instruction(
+		OpCode.CMP,
+		LiteralData{7, 0b0011110},
 		BG.W,
 		ImpliedBitGroup{BG.REG, 0},
 		BG.DATA,

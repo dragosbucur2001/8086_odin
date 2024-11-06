@@ -211,13 +211,13 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 
 	reader := init_bit_reader(data)
 
-	weird_grouping := [2]ExpectedGrouping {
+	add_weird_grouping := [2]ExpectedGrouping {
 		ExpEffective{"bp + si", 1000, .BIT_16},
 		cast(ExpImmediate)29,
 	}
 
 	// dst, src
-	expected_instrunctions := [?]OpCode{.ADD, .SUB}
+	expected_instrunctions := [?]OpCode{.ADD, .SUB, .CMP}
 	expected_grouping := [?][2]ExpectedGrouping {
 		{"bx", ExpEffective{"bx + si", 0, .BIT_0}},
 		{"bx", ExpEffective{"bp", 0, .BIT_8}},
@@ -235,7 +235,7 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 		{ExpEffective{"bp + si", 4, .BIT_8}, "bh"},
 		{ExpEffective{"bp + di", 6, .BIT_8}, "di"},
 		{ExpEffective{"bx", 0, .BIT_0}, cast(ExpImmediate)34},
-		weird_grouping,
+		add_weird_grouping,
 		{"ax", ExpEffective{"bp", 0, .BIT_8}},
 		{"al", ExpEffective{"bx + si", 0, .BIT_0}},
 		{"ax", "bx"},
@@ -250,8 +250,12 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 			grouping: [2]ExpectedGrouping = grouping_
 
 			// This operation is sligthly different for sub
-			if (instr_type == OpCode.SUB && grouping == weird_grouping) {
+			if (instr_type == OpCode.SUB && grouping == add_weird_grouping) {
 				grouping = {ExpEffective{"bx + di", 0, .BIT_0}, cast(ExpImmediate)29}
+			}
+
+			if (instr_type == OpCode.CMP && grouping == add_weird_grouping) {
+				grouping = {cast(ExpDirAddr)4834, cast(ExpImmediate)29}
 			}
 
 			//log.info(grouping)
@@ -266,5 +270,6 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 			check_operand(test, grouping[1], instr.src, W)
 		}
 	}
+
 
 }
