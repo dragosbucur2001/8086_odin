@@ -1,5 +1,7 @@
 package emulator
 
+import "core:log"
+
 //
 // DEFINITIONS
 //
@@ -31,6 +33,26 @@ OpCode :: enum {
 	ADD,
 	SUB,
 	CMP,
+	JNZ, // JNE
+	JE, // JZ
+	JL, // JNGE
+	JLE, // JNG
+	JB, // JNAE
+	JBE, // JNA
+	JP, // JPE
+	JO,
+	JS,
+	JNL, // JGE
+	JNLE, // JG
+	JNB, // JAE
+	JA, // JNBE
+	JNP, // JPO
+	JNO,
+	JNS,
+	LOOP,
+	LOOPZ,
+	LOOPNZ,
+	JCXZ,
 }
 
 Instruction :: struct {
@@ -118,11 +140,31 @@ BitGroupSizes := [BitGroup]u8 {
 
 
 OpCodeNames := [OpCode]string {
-	OpCode.NONE = "ERROR",
-	OpCode.MOV  = "mov",
-	OpCode.ADD  = "add",
-	OpCode.SUB  = "sub",
-	OpCode.CMP  = "cmp",
+	.NONE   = "ERROR",
+	.MOV    = "mov",
+	.ADD    = "add",
+	.SUB    = "sub",
+	.CMP    = "cmp",
+	.JNZ    = "jnz",
+	.JE     = "je",
+	.JL     = "jl",
+	.JLE    = "jle",
+	.JB     = "jb",
+	.JBE    = "jbe",
+	.JP     = "jp",
+	.JO     = "jo",
+	.JS     = "js",
+	.JNL    = "jnl",
+	.JNLE   = "jnle",
+	.JNB    = "jnb",
+	.JA     = "ja",
+	.JNP    = "jnp",
+	.JNO    = "jno",
+	.JNS    = "jns",
+	.LOOP   = "loop",
+	.LOOPZ  = "loopz",
+	.LOOPNZ = "loopnz",
+	.JCXZ   = "jcxz",
 }
 
 @(private)
@@ -208,20 +250,12 @@ Instructions := [?]Instruction {
 		BG.DATA,
 	),
 	// immidiate to register
-	init_instruction(
-		OpCode.MOV,
-		LiteralData{4, 0b1011},
-		BG.W,
-		BG.REG,
-		BG.DATA,
-		ImpliedBitGroup{BG.D, 1},
-	),
+	init_instruction(OpCode.MOV, LiteralData{4, 0b1011}, BG.W, BG.REG, BG.DATA),
 	// mem to acc
 	init_instruction(
 		OpCode.MOV,
 		LiteralData{7, 0b1010000},
 		BG.W,
-		// TODO: This is for dirrect address, it looks ugly, refactor
 		ImpliedBitGroup{BG.REG, 0},
 		ImpliedBitGroup{BG.MOD, 0},
 		ImpliedBitGroup{BG.RM, 0b110},
@@ -237,7 +271,6 @@ Instructions := [?]Instruction {
 		ImpliedBitGroup{BG.MOD, 0},
 		ImpliedBitGroup{BG.RM, 0b110},
 		BG.DISP,
-		ImpliedBitGroup{BG.D, 0},
 	),
 	// reg/mem to register
 	init_instruction(
@@ -267,9 +300,9 @@ Instructions := [?]Instruction {
 		OpCode.ADD,
 		LiteralData{7, 0b0000010},
 		BG.W,
-		ImpliedBitGroup{BG.REG, 0},
+		ImpliedBitGroup{BG.MOD, 0b11},
+		ImpliedBitGroup{BG.RM, 0b000},
 		BG.DATA,
-		ImpliedBitGroup{BG.D, 1},
 	),
 	// reg/mem to register
 	init_instruction(
@@ -299,9 +332,9 @@ Instructions := [?]Instruction {
 		OpCode.SUB,
 		LiteralData{7, 0b0010110},
 		BG.W,
-		ImpliedBitGroup{BG.REG, 0},
+		ImpliedBitGroup{BG.MOD, 0b11},
+		ImpliedBitGroup{BG.RM, 0b000},
 		BG.DATA,
-		ImpliedBitGroup{BG.D, 1},
 	),
 	// reg/mem to register
 	init_instruction(
@@ -331,10 +364,31 @@ Instructions := [?]Instruction {
 		OpCode.CMP,
 		LiteralData{7, 0b0011110},
 		BG.W,
-		ImpliedBitGroup{BG.REG, 0},
+		ImpliedBitGroup{BG.MOD, 0b11},
+		ImpliedBitGroup{BG.RM, 0b000},
 		BG.DATA,
-		ImpliedBitGroup{BG.D, 1},
 	),
+	init_instruction(OpCode.JNZ, LiteralData{8, 0b01110101}, BG.DATA),
+	init_instruction(OpCode.JE, LiteralData{8, 0b01110100}, BG.DATA),
+	init_instruction(OpCode.JL, LiteralData{8, 0b01111100}, BG.DATA),
+	init_instruction(OpCode.JLE, LiteralData{8, 0b01111110}, BG.DATA),
+	init_instruction(OpCode.JB, LiteralData{8, 0b01110010}, BG.DATA),
+	//
+	init_instruction(OpCode.JBE, LiteralData{8, 0b01110110}, BG.DATA),
+	init_instruction(OpCode.JP, LiteralData{8, 0b01111010}, BG.DATA),
+	init_instruction(OpCode.JO, LiteralData{8, 0b01110000}, BG.DATA),
+	init_instruction(OpCode.JS, LiteralData{8, 0b01111000}, BG.DATA),
+	init_instruction(OpCode.JNL, LiteralData{8, 0b01111101}, BG.DATA),
+	init_instruction(OpCode.JNLE, LiteralData{8, 0b01111111}, BG.DATA),
+	init_instruction(OpCode.JNB, LiteralData{8, 0b01110011}, BG.DATA),
+	init_instruction(OpCode.JA, LiteralData{8, 0b01110111}, BG.DATA),
+	init_instruction(OpCode.JNP, LiteralData{8, 0b01111011}, BG.DATA),
+	init_instruction(OpCode.JNO, LiteralData{8, 0b01110001}, BG.DATA),
+	init_instruction(OpCode.JNS, LiteralData{8, 0b01111001}, BG.DATA),
+	init_instruction(OpCode.LOOP, LiteralData{8, 0b11100010}, BG.DATA),
+	init_instruction(OpCode.LOOPZ, LiteralData{8, 0b11100001}, BG.DATA),
+	init_instruction(OpCode.LOOPNZ, LiteralData{8, 0b11100000}, BG.DATA),
+	init_instruction(OpCode.JCXZ, LiteralData{8, 0b11100011}, BG.DATA),
 }
 
 //
@@ -426,6 +480,9 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 		if val, ok := reg.(u8); ok {
 			result.src = RegisterOperand{val}
 		} else if val, ok := data.(i16); ok {
+			// immediate to memory has the reg field set to 000
+			// and the actual memory address is calculated via mod
+			// the direction is implied
 			result.src = cast(ImmediateOperand)val
 		}
 
@@ -447,7 +504,10 @@ get_instruction :: proc(reader: ^BitReader) -> (result: DecodedInstruction, ok: 
 		case:
 			{
 				// Immediate value
-				result.dst = cast(ImmediateOperand)data.(i16)
+				if _, ok := reg.(u8); ok {
+					result.dst = result.src
+					result.src = cast(ImmediateOperand)data.(i16)
+				}
 			}
 		}
 

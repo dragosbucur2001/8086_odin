@@ -16,7 +16,7 @@ ExpEffective :: struct {
 	disp:       i16,
 	disp_width: DisplacementWidth,
 }
-ExpectedGrouping :: union #no_nil {
+ExpectedGrouping :: union {
 	ExpImmediate,
 	ExpReg,
 	ExpDirAddr,
@@ -51,6 +51,10 @@ check_operand :: proc(test: ^t.T, expected: ExpectedGrouping, operand: Operand, 
 		{
 			op, _ := operand.(DirectAddrOperand)
 			t.expect(test, cast(i16)op == cast(i16)exp)
+		}
+	case nil:
+		{
+			t.expect(test, operand == nil)
 		}
 	}
 }
@@ -271,5 +275,39 @@ decode_add_sub_cmp_jnz :: proc(test: ^t.T) {
 		}
 	}
 
+	jumps := [?]ExpectedInstr {
+		{OpCode.JNZ, {cast(ExpImmediate)2, nil}},
+		{OpCode.JNZ, {cast(ExpImmediate)-4, nil}},
+		{OpCode.JNZ, {cast(ExpImmediate)-6, nil}},
+		{OpCode.JNZ, {cast(ExpImmediate)-4, nil}},
+		{OpCode.JE, {cast(ExpImmediate)-2, nil}},
+		{OpCode.JL, {cast(ExpImmediate)-4, nil}},
+		{OpCode.JLE, {cast(ExpImmediate)-6, nil}},
+		{OpCode.JB, {cast(ExpImmediate)-8, nil}},
+		{OpCode.JBE, {cast(ExpImmediate)-10, nil}},
+		{OpCode.JP, {cast(ExpImmediate)-12, nil}},
+		{OpCode.JO, {cast(ExpImmediate)-14, nil}},
+		{OpCode.JS, {cast(ExpImmediate)-16, nil}},
+		{OpCode.JNZ, {cast(ExpImmediate)-18, nil}},
+		{OpCode.JNL, {cast(ExpImmediate)-20, nil}},
+		{OpCode.JNLE, {cast(ExpImmediate)-22, nil}},
+		{OpCode.JNB, {cast(ExpImmediate)-24, nil}},
+		{OpCode.JA, {cast(ExpImmediate)-26, nil}},
+		{OpCode.JNP, {cast(ExpImmediate)-28, nil}},
+		{OpCode.JNO, {cast(ExpImmediate)-30, nil}},
+		{OpCode.JNS, {cast(ExpImmediate)-32, nil}},
+		{OpCode.LOOP, {cast(ExpImmediate)-34, nil}},
+		{OpCode.LOOPZ, {cast(ExpImmediate)-36, nil}},
+		{OpCode.LOOPNZ, {cast(ExpImmediate)-38, nil}},
+		{OpCode.JCXZ, {cast(ExpImmediate)-40, nil}},
+	}
 
+	for jump in jumps {
+		instr, ok := get_instruction(&reader)
+		t.expect(test, instr.type == jump.type)
+		t.expect(test, ok)
+
+		check_operand(test, jump.grouping[0], instr.src, 0)
+		check_operand(test, jump.grouping[1], instr.dst, 0)
+	}
 }
